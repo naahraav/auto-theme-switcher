@@ -8,7 +8,7 @@ Auto Theme Switcher is a lightweight Windows desktop application written in C++ 
 
 Here's a preview of Auto Theme Switcher in action:
 
-![Auto Theme Switcher application screenshot](assets/Screenshot 2026-10-25 231654.png)
+![Auto Theme Switcher application screenshot](assets/ss1.png)
 
 ## Features
 
