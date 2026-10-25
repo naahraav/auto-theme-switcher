@@ -4,6 +4,12 @@ Automatically switch between Light and Dark themes on Windows according to your 
 
 Auto Theme Switcher is a lightweight Windows desktop application written in C++ that automates system and application theme changes based on the time of day. It runs in the background, remembers your preferences, and lets you customize how Windows and applications look during the day and at night.
 
+## Screenshot
+
+Here's a preview of Auto Theme Switcher in action:
+
+![Auto Theme Switcher application screenshot](assets/auto-theme-switcher.png)
+
 ## Features
 
 - **Automatic Theme Switching** — Automatically applies your selected themes according to your schedule.
