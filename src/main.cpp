@@ -19,6 +19,7 @@
 #pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #define IDT_TIMER          1001
+#define IDI_APP            101
 
 #define IDC_EDIT_LIGHT     2001
 #define IDC_EDIT_DARK      2002
@@ -33,16 +34,20 @@
 #define IDC_CHK_STARTUP    2011
 
 #define WM_TRAYICON        (WM_USER + 1)
+#define WM_APP_RESTORE     (WM_APP + 1)
 #define IDM_TRAY_OPEN      3001
 #define IDM_TRAY_TOGGLE    3002
 #define IDM_TRAY_STARTUP   3003
 #define IDM_TRAY_EXIT      3004
 
 // Global Variables
+const wchar_t APP_CLASS_NAME[] = L"ThemeAutoSwitcherClass";
+HANDLE hSingleInstance = NULL;
 HWND hEditLight, hEditDark;
 HWND hCmbDayWin, hCmbDayApp, hCmbNitWin, hCmbNitApp;
 HWND hBtnSave, hBtnToggle, hLblStatus, hBoxInfo, hChkStartup;
 HFONT hFontSegoe, hFontBold, hFontSmall, hFontEdit;
+HICON hAppIcon = NULL, hAppIconSmall = NULL;
 NOTIFYICONDATAW nid = {};
 
 // Schedule & Mode Configurations (1 = Light, 0 = Dark)
@@ -134,11 +139,17 @@ void ApplyWindowsTheme(int winMode, int appMode) {
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
         RegSetValueExW(hKey, L"SystemUsesLightTheme", 0, REG_DWORD, (const BYTE*)&dwWin, sizeof(dwWin));
         RegSetValueExW(hKey, L"AppsUseLightTheme", 0, REG_DWORD, (const BYTE*)&dwApp, sizeof(dwApp));
+        if (winMode == 1) {
+            DWORD dwPrevalence = 0;
+            RegSetValueExW(hKey, L"ColorPrevalence", 0, REG_DWORD, (const BYTE*)&dwPrevalence, sizeof(dwPrevalence));
+        }
         RegCloseKey(hKey);
     }
 
     DWORD_PTR dwResult;
-    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"ImmersiveColorSet", SMTO_ABORTIFHUNG, 200, &dwResult);
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"ImmersiveColorSet", SMTO_ABORTIFHUNG, 5000, &dwResult);
+    SendMessageTimeoutW(HWND_BROADCAST, WM_THEMECHANGED, 0, 0, SMTO_ABORTIFHUNG, 5000, &dwResult);
+    SendMessageTimeoutW(HWND_BROADCAST, WM_DWMCOLORIZATIONCOLORCHANGED, 0, 0, SMTO_ABORTIFHUNG, 5000, &dwResult);
 }
 
 void CheckAndApplySchedule() {
@@ -315,7 +326,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         nid.uID = 1;
         nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         nid.uCallbackMessage = WM_TRAYICON;
-        nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        nid.hIcon = hAppIconSmall;
         wcscpy(nid.szTip, L"Auto Theme Switcher");
         Shell_NotifyIconW(NIM_ADD, &nid);
 
@@ -378,6 +389,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         break;
+    }
+
+    case WM_APP_RESTORE: {
+        ShowWindow(hwnd, SW_SHOW);
+        ShowWindow(hwnd, SW_RESTORE);
+        SetForegroundWindow(hwnd);
+        return 0;
     }
 
     case WM_TRAYICON: {
@@ -463,6 +481,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         DeleteObject(hFontSmall);
         DeleteObject(hFontEdit);
         KillTimer(hwnd, IDT_TIMER);
+        if (hSingleInstance != NULL) {
+            ReleaseMutex(hSingleInstance);
+            CloseHandle(hSingleInstance);
+            hSingleInstance = NULL;
+        }
         PostQuitMessage(0);
         break;
 
@@ -473,19 +496,36 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow) {
-    const wchar_t CLASS_NAME[] = L"ThemeAutoSwitcherClass";
+    bool startMinimized = (strstr(lpCmdLine, "--startup") != nullptr);
+
+    hSingleInstance = CreateMutexW(NULL, TRUE, L"Local\\AutoThemeSwitcher_SingleInstance");
+    if (hSingleInstance != NULL && GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND existing = NULL;
+        for (int attempt = 0; attempt < 10 && existing == NULL; attempt++) {
+            existing = FindWindowW(APP_CLASS_NAME, NULL);
+            if (existing == NULL) Sleep(100);
+        }
+        if (existing != NULL) {
+            if (!startMinimized) PostMessageW(existing, WM_APP_RESTORE, 0, 0);
+            return 0;
+        }
+    }
+
+    hAppIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APP));
+    hAppIconSmall = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
 
     WNDCLASSW wc = {};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = CLASS_NAME;
+    wc.lpszClassName = APP_CLASS_NAME;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = hAppIcon;
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
 
     RegisterClassW(&wc);
 
     HWND hwnd = CreateWindowExW(
-        0, CLASS_NAME, L"Auto Theme Switcher",
+        0, APP_CLASS_NAME, L"Auto Theme Switcher",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 535, 435,
         NULL, NULL, hInstance, NULL
@@ -493,7 +533,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
 
     if (hwnd == NULL) return 0;
 
-    bool startMinimized = (strstr(lpCmdLine, "--startup") != nullptr);
+    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hAppIconSmall);
+    SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hAppIcon);
+
     if (!startMinimized) {
         ShowWindow(hwnd, nCmdShow);
         UpdateWindow(hwnd);
